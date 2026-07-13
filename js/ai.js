@@ -36,12 +36,9 @@ function cpuBuyOne(game, p) {
   // WA残り僅かなら1ptも積極取得
   if (waLeft <= 5 && game.canBuyWA('wa1') && coins >= 3) return game.buyWA(p, 'wa1');
 
-  // コストありビルダー（強力。$5以上で狙う）
-  const paidAffordable = Object.keys(game.paidSupply)
-    .filter(id => game.paidSupply[id] > 0 && CARD_DB[id].cost <= coins)
-    .sort((a, b) => CARD_DB[b].cost - CARD_DB[a].cost);
-  if (paidAffordable.length > 0 && coins >= 5 && Math.random() < 0.55) {
-    if (game.buyPaidBuilder(p, paidAffordable[0])) return true;
+  // コストありビルダー（表向き1枚のみ。買えるなら狙う）
+  if (game.paidRow != null && CARD_DB[game.paidRow].cost <= coins && Math.random() < 0.55) {
+    if (game.buyPaidBuilder(p, game.paidRow)) return true;
   }
 
   // コストフリービルダー取得: クレジット源とシナジーを重視

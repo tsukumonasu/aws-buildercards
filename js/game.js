@@ -64,7 +64,8 @@ class Game {
 
     this.freeDeck = [];
     this.freeRow = [];
-    this.paidSupply = {};
+    this.paidDeck = [];   // コストありビルダーのシャッフル山
+    this.paidRow = null;  // 表向き1枚（めくって置く）
     this.waSupply = {};
 
     this.setup();
@@ -77,7 +78,11 @@ class Game {
     this.freeRow = [];
     for (let i = 0; i < FREE_ROW_SIZE; i++) this.freeRow.push(this.freeDeck.pop() || null);
 
-    PAID_SUPPLY_SETUP.forEach(s => { this.paidSupply[s.id] = s.count; });
+    // コストありビルダー: 1つの山にまとめてシャッフルし、1枚だけ表向きに公開
+    const paidPool = [];
+    PAID_SUPPLY_SETUP.forEach(s => { for (let i = 0; i < s.count; i++) paidPool.push(s.id); });
+    this.paidDeck = shuffle(paidPool);
+    this.paidRow = this.paidDeck.pop() || null;
     WA_SUPPLY_SETUP.forEach(s => { this.waSupply[s.id] = s.count; });
 
     // 各プレイヤーの初期デッキ = オンプレ10枚（この時点ではまだドローしない）
@@ -402,12 +407,15 @@ class Game {
   }
 
   buyPaidBuilder(player, id) {
+    // 表向きの1枚のみ購入可能（id は表向きカードと一致する必要がある）
+    if (this.paidRow == null || this.paidRow !== id) return false;
     const card = CARD_DB[id];
-    if (this.buys <= 0 || !this.paidSupply[id] || this.coins < card.cost) return false;
+    if (this.buys <= 0 || this.coins < card.cost) return false;
     this.coins -= card.cost;
     this.buys -= 1;
-    this.paidSupply[id] -= 1;
     player.discard.push(id);
+    // 山から次の1枚を公開
+    this.paidRow = this.paidDeck.pop() || null;
     this.log(`${player.name}: ${card.name} を購入（$${card.cost}）`, 'buy');
     return true;
   }

@@ -249,16 +249,18 @@ function render() {
     consoleHint.classList.toggle('active', setupPhase);
   }
 
-  // コストありビルダー
+  // コストありビルダー（表向き1枚のみ購入可能。残りは山札）
   const paidEl = document.getElementById('paid-supply');
   paidEl.innerHTML = '';
-  PAID_SUPPLY_SETUP.forEach(s => {
-    const count = GAME.paidSupply[s.id];
-    const canBuy = yourTurn && buyPhase && GAME.buys > 0 && count > 0 && GAME.coins >= CARD_DB[s.id].cost;
-    const el = makeCardEl(s.id, { count, clickable: canBuy ? 'buyable' : '', disabled: count === 0 });
-    if (canBuy) el.addEventListener('click', () => { GAME.buyPaidBuilder(you, s.id); render(); });
+  if (GAME.paidRow == null) {
+    paidEl.innerHTML = '<div class="empty-hint">コストありビルダーは残っていません</div>';
+  } else {
+    const id = GAME.paidRow;
+    const canBuy = yourTurn && buyPhase && GAME.buys > 0 && GAME.coins >= CARD_DB[id].cost;
+    const el = makeCardEl(id, { count: GAME.paidDeck.length + 1, clickable: canBuy ? 'buyable' : '' });
+    if (canBuy) el.addEventListener('click', () => { GAME.buyPaidBuilder(you, id); render(); });
     paidEl.appendChild(el);
-  });
+  }
 
   // WA
   const waEl = document.getElementById('wa-supply');

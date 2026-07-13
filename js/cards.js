@@ -413,7 +413,7 @@ const FREE_BUILDER_POOL = [
 ];
 
 // コンソールの face-up 列に並べる枚数
-const FREE_ROW_SIZE = 5;
+const FREE_ROW_SIZE = 4;
 
 // コストあり・ビルダーの供給
 const PAID_SUPPLY_SETUP = [

@@ -245,3 +245,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 
 /* リタイア置き場 */
 #retired-pile .card { opacity: .55; filter: grayscale(0.3); }
+
+
+/* ── パネル内の小見出し（コンソール統合枠） ── */
+.sub-title { font-size: 12px; color: var(--muted); font-weight: 700; margin: 12px 0 6px; padding-left: 8px; border-left: 3px solid var(--aws-orange); }
+.sub-title:first-of-type { margin-top: 4px; }
