@@ -61,6 +61,7 @@ class Game {
     this.over = false;
     this._localUsed = new Set();
     this.pendingRecycle = null;
+    this.retiredThisTurn = false;
 
     this.freeDeck = [];
     this.freeRow = [];
@@ -166,6 +167,7 @@ class Game {
     this.phase = 'build';
     this.coins = 0;
     this.buys = 1;
+    this.retiredThisTurn = false;  // このターン既にリタイアしたか（1ターン1枚まで）
     const p = this.players[this.current];
     this.log(`── ${p.name} のターン (${this.turnCount}) ──`, 'turn');
   }
@@ -216,9 +218,10 @@ class Game {
       let matches = [];
 
       if (req.self) {
-        // 自身含む同名の未使用カード
-        const same = [selfIndex, ...avail().filter(i => player.inPlay[i] === card.id)];
-        if (same.length >= req.self) matches = same.slice(0, req.self);
+        // 同名カードが「ちょうど req.self 枚」に到達した瞬間に発動（消費しない）。
+        // これにより 2枚効果・3枚効果が累積し、閾値ごとに1回だけ発動する。
+        const sameCount = player.inPlay.filter(pid => pid === card.id).length;
+        matches = (sameCount === req.self) ? [selfIndex] : [];
       } else if (req.cardId) {
         const found = avail().filter(i => player.inPlay[i] === req.cardId);
         matches = syn.perMatch ? found : found.slice(0, 1);
@@ -250,7 +253,7 @@ class Game {
       if (parts.length) allParts.push(...parts);
 
       // self コンボは自身も消費対象。それ以外は相手のみ消費（自身は複数シナジーに使える）
-      const consume = req.self ? matches : matches.filter(i => i !== selfIndex);
+      const consume = req.self ? [] : matches.filter(i => i !== selfIndex);
       consume.forEach(i => { this._localUsed.add(i); allUsed.push(i); });
     }
 
@@ -357,8 +360,8 @@ class Game {
   // （ルール: ビルドフェーズ冒頭、カード効果ドロー前に判定するのが正式だが、
   //   ここでは「まだ手札にオンプレが残っている」ことを条件に簡易化）
   canRetire(player) {
-    // 手札のAWSカードが3枚以上あれば、オンプレを1枚リタイアできる
-    return player.handOnpremCount() > 0 && player.handAwsCount() >= 3;
+    // 手札のAWSカードが3枚以上あれば、オンプレを1枚リタイアできる（1ターンに1枚まで）
+    return !this.retiredThisTurn && player.handOnpremCount() > 0 && player.handAwsCount() >= 3;
   }
 
   // 手札のオンプレを1枚リタイア（ゲームから除去）
@@ -369,6 +372,7 @@ class Game {
     if (idx < 0 || CARD_DB[player.hand[idx]].type !== 'onprem') return false;
     const id = player.hand.splice(idx, 1)[0];
     player.retired.push(id);
+    this.retiredThisTurn = true;
     this.log(`${player.name}: ${CARD_DB[id].name}（オンプレ）をリタイア`, 'retire');
     return true;
   }

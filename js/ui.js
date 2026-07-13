@@ -63,12 +63,10 @@ function cardSynergies(card) {
  * 戻り値: [{ trigger, partners:[id...], reqType, gain, label }]
  */
 function analyzeHandSynergies(hand) {
-  // エンジンの resolveSynergies と同じ論理で、手札から発動可能な組み合わせを列挙。
-  // 1枚のカードは複数のシナジーに使える場合がある（perMatch や複数トリガー）が、
-  // 相手カードの消費は各シナジー内で行い、二重取りは避ける。
+  // 手札から発動可能な組み合わせを列挙（表示・発動ボタン用）。
   const combos = [];
+  const seenSelf = new Set(); // 同名self閾値の重複列挙を防ぐ（"id#N"）
 
-  // AWS→オンプレ順のインデックス（プレイ順の目安）
   const orderIdx = hand.map((id, i) => i).sort((a, b) => {
     const ta = CARD_DB[hand[a]].type === 'builder' ? 0 : 1;
     const tb = CARD_DB[hand[b]].type === 'builder' ? 0 : 1;
@@ -76,6 +74,7 @@ function analyzeHandSynergies(hand) {
   });
   const catOf = j => CARD_DB[hand[j]].category;
   const isBuilder = j => CARD_DB[hand[j]].type === 'builder';
+  const usedNonSelf = new Set(); // 非self系で相手として割り当て済みのidx
 
   for (const idx of orderIdx) {
     const id = hand[idx];
@@ -85,53 +84,58 @@ function analyzeHandSynergies(hand) {
 
     for (const syn of syns) {
       const req = syn.requires || {};
-      const gain = effBadges(syn.perMatch ? syn : syn); // 表示は単位効果
-      // 候補（自身以外）
-      const cand = orderIdx.filter(j => j !== idx);
-      let partners = [];
 
       if (req.self) {
-        const same = [idx, ...cand.filter(j => hand[j] === id)];
-        if (same.length >= req.self) partners = same.slice(0, req.self);
-        else continue;
-      } else if (req.cardId) {
+        // 同名がちょうど閾値以上あるとき、その閾値コンボを1回だけ列挙
+        const sameIdxs = orderIdx.filter(j => hand[j] === id);
+        const key = id + '#' + req.self;
+        if (sameIdxs.length >= req.self && !seenSelf.has(key)) {
+          seenSelf.add(key);
+          const chosen = sameIdxs.slice(0, req.self);
+          const realGain = effBadges({ coins: syn.coins||0, cards: syn.cards||0, buys: syn.buys||0 });
+          combos.push({
+            members: chosen.map(j => hand[j]), memberIdx: chosen,
+            trigger: id, triggerIdx: idx, gain: realGain, reqType: 'self',
+            label: `${card.name} を${req.self}枚プレイ → ${realGain}`
+          });
+        }
+        continue;
+      }
+
+      // 非self系: 未使用の相手を探す
+      const cand = orderIdx.filter(j => j !== idx && !usedNonSelf.has(j));
+      let partnerIdxs = [];
+      if (req.cardId) {
         const f = cand.filter(j => hand[j] === req.cardId);
         if (f.length === 0) continue;
-        partners = [...(syn.perMatch ? f : f.slice(0,1)), idx];
+        partnerIdxs = syn.perMatch ? f : f.slice(0, 1);
       } else if (req.cardIds) {
         const f = cand.filter(j => req.cardIds.includes(hand[j]));
         if (f.length === 0) continue;
-        partners = [...(syn.perMatch ? f : f.slice(0,1)), idx];
+        partnerIdxs = syn.perMatch ? f : f.slice(0, 1);
       } else if (req.categoryIn) {
         const f = cand.filter(j => req.categoryIn.includes(catOf(j)));
-        if (req.count) { if (f.length < req.count) continue; partners = [...f.slice(0, req.count), idx]; }
-        else { if (f.length === 0) continue; partners = [...(syn.perMatch ? f : f.slice(0,1)), idx]; }
+        if (req.count) { if (f.length < req.count) continue; partnerIdxs = f.slice(0, req.count); }
+        else { if (f.length === 0) continue; partnerIdxs = syn.perMatch ? f : f.slice(0, 1); }
       } else if (req.any) {
         const f = cand.filter(j => isBuilder(j));
         if (f.length === 0) continue;
-        partners = [...(syn.perMatch ? f : f.slice(0,1)), idx];
+        partnerIdxs = syn.perMatch ? f : f.slice(0, 1);
       } else {
         continue;
       }
 
-      // members: プレイ順（相手→トリガー）。self は同名列。
-      const memberIdx = req.self ? partners : partners;
-      const memberIds = memberIdx.map(j => hand[j]);
-      // 効果の実数（perMatchは枚数倍）
-      const factor = syn.perMatch ? (memberIdx.length - (req.self ? 0 : 1)) : 1;
+      partnerIdxs.forEach(j => usedNonSelf.add(j));
+      const memberIdx = [...partnerIdxs, idx];
+      const factor = syn.perMatch ? partnerIdxs.length : 1;
       const realGain = effBadges({
         coins: (syn.coins||0)*factor, cards: (syn.cards||0)*factor, buys: (syn.buys||0)*factor
       });
-
-      let label;
-      if (req.self) label = `${card.name} を${req.self}枚プレイ → ${realGain}`;
-      else label = `${reqLabel(req)}${card.name} をプレイ → ${realGain}`;
-
       combos.push({
-        members: memberIds, memberIdx,
+        members: memberIdx.map(j => hand[j]), memberIdx,
         trigger: id, triggerIdx: idx, gain: realGain,
-        reqType: req.self ? 'self' : (req.cardId ? 'cardId' : (req.cardIds ? 'cardIds' : (req.categoryIn ? 'categoryIn' : 'any'))),
-        label
+        reqType: req.cardId ? 'cardId' : (req.cardIds ? 'cardIds' : (req.categoryIn ? 'categoryIn' : 'any')),
+        label: `${reqLabel(req)}${card.name} をプレイ → ${realGain}`
       });
     }
   }
@@ -303,7 +307,7 @@ function render() {
   const canRetireNow = yourTurn && buildPhase && GAME.canRetire(you);
   you.hand.forEach((id, idx) => {
     const card = CARD_DB[id];
-    const playable = yourTurn && buildPhase && card.type !== 'wa';
+    const playable = yourTurn && (buildPhase || buyPhase) && card.type !== 'wa';
     const el = makeCardEl(id, { clickable: playable ? 'playable' : '' });
 
     // シナジー関与カードに印
@@ -334,7 +338,7 @@ function render() {
   if (you.hand.length === 0) handEl.innerHTML = '<div class="empty-hint">手札がありません</div>';
 
   // シナジー組み合わせ一覧
-  renderComboList(combos, yourTurn && buildPhase);
+  renderComboList(combos, yourTurn && (buildPhase || buyPhase));
 
   // リタイア案内
   const retireHint = document.getElementById('retire-hint');
@@ -399,7 +403,7 @@ function renderComboList(combos, active) {
  * self（同名複数）の場合は同名カードを必要枚数プレイする。
  */
 function playCombo(combo) {
-  if (GAME.current !== 0 || GAME.phase !== 'build') return;
+  if (GAME.current !== 0 || (GAME.phase !== 'build' && GAME.phase !== 'buy')) return;
   const you = GAME.players[0];
 
   // combo.members は「条件カード → トリガー」の順（self は同名を必要枚数）。
