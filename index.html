@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AWS BuilderCards 2nd Edition — デッキ構築ゲーム（非公式Web版）</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🧱</span>
+      <div>
+        <h1>AWS BuilderCards <span class="ed">2nd Edition</span></h1>
+        <span class="sub">デッキ構築ゲーム — 非公式Web版</span>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-rules" class="btn ghost">📜 ルール</button>
+      <button id="btn-guide" class="btn ghost">📖 カード図鑑</button>
+      <button id="btn-new" class="btn">🔄 新しいゲーム</button>
+    </div>
+  </header>
+
+  <div class="phasebar">
+    <span id="step-build" class="phase-step">① ビルドフェーズ</span>
+    <span class="phase-arrow">▶</span>
+    <span id="step-buy" class="phase-step">② 購入フェーズ</span>
+    <span class="phase-arrow">▶</span>
+    <span class="phase-step">③ エンドフェーズ</span>
+  </div>
+
+  <main>
+    <section class="panel">
+      <h2 class="panel-title">🏆 Well-Architected（勝利点）</h2>
+      <div id="wa-supply" class="card-row"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">💳 コストありビルダー（クレジット消費）</h2>
+      <div id="paid-supply" class="card-row"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">🖥 コンソール — コストフリービルダー（クレジット不要で取得）</h2>
+      <div id="console-hint" class="discard-hint"></div>
+      <div id="free-row" class="card-row"></div>
+      <div class="row-actions">
+        <button id="btn-blind" class="btn small">🗂 山札トップを引く</button>
+        <span class="hint">列に欲しいカードが無ければブラインドで取得（拒否できません）</span>
+      </div>
+    </section>
+
+    <section class="panel hand-panel">
+      <div class="hand-header">
+        <h2 class="panel-title">🖐 あなたの手札</h2>
+        <div class="hand-controls">
+          <span class="mini-stat">🗂 山札 <b id="deck-count">0</b></span>
+          <span class="mini-stat">🗑 捨札 <b id="discard-count">0</b></span>
+          <span class="mini-stat">AWS <b id="your-builders">0</b></span>
+          <span class="mini-stat">オンプレ <b id="your-onprem">0</b></span>
+          <button id="btn-to-buy" class="btn small">購入フェーズへ ▶</button>
+          <button id="btn-endturn" class="btn small primary">ターン終了 ▶</button>
+        </div>
+      </div>
+      <div id="retire-hint" class="retire-hint"></div>
+      <div id="combo-list" class="combo-list"></div>
+      <div id="hand" class="card-row"></div>
+    </section>
+
+    <div class="statusbar">
+      <span id="turn-info" class="status-item">—</span>
+      <span id="phase-info" class="status-item badge">—</span>
+      <span id="coins-info" class="status-item coins">$0</span>
+      <span id="buys-info" class="status-item">購入 1</span>
+      <span id="wa-info" class="status-item">WA山</span>
+      <span class="status-item vp">あなた <b id="your-vp">0</b>★</span>
+      <span class="status-item vp">CPU <b id="cpu-vp">0</b>★</span>
+    </div>
+
+    <section class="panel">
+      <h2 class="panel-title">🔧 場（プレイ中のカード）— 同カテゴリ／特定カードでシナジー発動</h2>
+      <div id="inplay" class="card-row"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">🗑 捨て札</h2>
+      <div id="discard-hint" class="discard-hint"></div>
+      <div id="discard-pile" class="card-row"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">🚫 リタイア（ゲームから除去したカード）</h2>
+      <div id="retired-pile" class="card-row"></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">📋 ゲームログ</h2>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <div id="result-overlay" class="overlay hidden"></div>
+
+  <div id="rules-overlay" class="overlay hidden">
+    <div class="guide-box">
+      <div class="guide-head"><h2>📜 ルール</h2><button id="btn-rules-close" class="btn close-btn">✕ 閉じる</button></div>
+      <div class="rules-body">
+        <h3>ゲームの目的</h3>
+        <p>オンプレ環境から AWS への移行を進め、<b>Well-Architected カード（勝利点）</b>を集めます。
+        WAカードが全て無くなった瞬間にゲーム終了。勝利点の合計が最も多いプレイヤーが勝ちです。</p>
+
+        <h3>ゲームの準備</h3>
+        <p>各プレイヤーはオンプレカード10枚に加え、コンソール（コストフリービルダー）から
+        <b>2枚</b>を受け取り、よくシャッフルして山札にします。そこから5枚引いて手番を開始します。</p>
+
+        <h3>3種類のカード</h3>
+        <ul>
+          <li><b>オンプレカード（×10）＋コンソールから2枚</b>：初期デッキ（計12枚）。オンプレは<b>クレジットを生みません。</b>
+            デッキを薄くするためビルドフェーズで破棄していく対象です。
+            一部（Virtual Machine ⇔ Bare Metal Host、Corporate Identity Provider ⇔ AWS IAM Identity Center）は
+            AWSカードとの<b>シナジー効果</b>を持ちます。</li>
+          <li><b>AWSカード（Builder）</b>：<b>クレジットはここから得ます</b>（カード中央のオレンジ丸の数字）。
+            <b>コストフリー</b>（無料取得）と<b>コストあり</b>（クレジット消費）の2種。
+            場に出すと<b>プライマリ効果（常時）</b>、条件（同カテゴリ／特定カードが場にある等）を満たすと
+            <b>セカンダリ効果（シナジー）</b>も発動します。</li>
+          <li><b>Well-Architected カード</b>：勝利点（1pt=コスト3 / 3pt=コスト8）。<b>1ptが残る間は3ptを買えません。</b></li>
+        </ul>
+
+        <h3>ターンの流れ</h3>
+        <ol>
+          <li><b>① ビルドフェーズ</b>：
+            <br>・手札の<b>AWSカードが3枚以上</b>ある場合、オンプレを1枚<b>リタイア（このゲーム中は使えなくなる／除去）</b>できます（効果でドローする前に）。
+            <br>・手札のカードを場に出して +$ / +ドロー / +購入 を得る。</li>
+          <li><b>② 購入フェーズ</b>（基本1購入・効果で増加）：
+            <br>(1) コストフリービルダーを取得 (2) コストありビルダーを購入 (3) WAを購入 (4) コンソール山札トップをブラインド取得（拒否不可）</li>
+          <li><b>③ エンドフェーズ</b>：手札・場を全て捨て札へ → 5枚ドロー → 次のプレイヤーへ。</li>
+        </ol>
+
+        <h3>勝敗</h3>
+        <p>勝利点の合計 → 同点なら <b>AWSカード枚数</b>が多い方 → それも同数なら<b>引き分け</b>。</p>
+
+        <h3>攻略ヒント</h3>
+        <ul>
+          <li>序盤〜中盤は compute / containers を中心に AWS カードを集め、オンプレを破棄してデッキを薄く。</li>
+          <li>シナジー（EC2複数、同カテゴリ、S3+CloudFront 等）を狙うとクレジットが伸びる。</li>
+          <li>クレジットが安定して8以上になったら3ptを一気に。</li>
+          <li>+購入エフェクトは1ターンに複数取得でき価値が高い。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div id="guide-overlay" class="overlay hidden">
+    <div class="guide-box">
+      <div class="guide-head"><h2>📖 カード図鑑</h2><button id="btn-guide-close" class="btn close-btn">✕ 閉じる</button></div>
+      <p class="guide-note">
+        <a href="https://zenn.dev/issy/articles/zenn-aws-buildercards" target="_blank" rel="noopener">Zenn の解説記事</a>
+        と <a href="https://note.com/sekimoriko/n/n7a53b081272a" target="_blank" rel="noopener">moriko 氏の攻略記事</a>
+        を参考にした非公式ファン実装です。効果値・枚数はゲーム性のため調整しています。
+      </p>
+      <div id="guide-cards" class="card-grid"></div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <p>非公式ファン制作。AWS および各サービス名は Amazon.com, Inc. またはその関連会社の商標です。</p>
+  </footer>
+
+  <script src="js/cards.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>

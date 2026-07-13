@@ -1,0 +1,24 @@
+# OS 生成ファイル
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# エディタ / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ログ・一時ファイル
+*.log
+tmp/
+*.tmp
+
+# 依存関係（将来 npm 等を使う場合に備えて）
+node_modules/
+package-lock.json
+
+# 環境設定
+.env
+.env.local
