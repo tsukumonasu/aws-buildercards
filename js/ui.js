@@ -63,9 +63,11 @@ function cardSynergies(card) {
  * 戻り値: [{ trigger, partners:[id...], reqType, gain, label }]
  */
 function analyzeHandSynergies(hand) {
-  // 手札から発動可能な組み合わせを列挙（表示・発動ボタン用）。
+  // 手札から発動可能な組み合わせを「候補」として列挙（表示・発動ボタン用）。
+  // 1枚のカードが複数のシナジーに関与しうるので、ここでは排他制限をかけず、
+  // 成立しうる組み合わせをすべて挙げる（実際の発動時の消費はエンジンが管理）。
   const combos = [];
-  const seenSelf = new Set(); // 同名self閾値の重複列挙を防ぐ（"id#N"）
+  const seen = new Set(); // 重複列挙防止キー
 
   const orderIdx = hand.map((id, i) => i).sort((a, b) => {
     const ta = CARD_DB[hand[a]].type === 'builder' ? 0 : 1;
@@ -74,7 +76,6 @@ function analyzeHandSynergies(hand) {
   });
   const catOf = j => CARD_DB[hand[j]].category;
   const isBuilder = j => CARD_DB[hand[j]].type === 'builder';
-  const usedNonSelf = new Set(); // 非self系で相手として割り当て済みのidx
 
   for (const idx of orderIdx) {
     const id = hand[idx];
@@ -88,9 +89,9 @@ function analyzeHandSynergies(hand) {
       if (req.self) {
         // 同名がちょうど閾値以上あるとき、その閾値コンボを1回だけ列挙
         const sameIdxs = orderIdx.filter(j => hand[j] === id);
-        const key = id + '#' + req.self;
-        if (sameIdxs.length >= req.self && !seenSelf.has(key)) {
-          seenSelf.add(key);
+        const key = 'self#' + id + '#' + req.self;
+        if (sameIdxs.length >= req.self && !seen.has(key)) {
+          seen.add(key);
           const chosen = sameIdxs.slice(0, req.self);
           const realGain = effBadges({ coins: syn.coins||0, cards: syn.cards||0, buys: syn.buys||0 });
           combos.push({
@@ -102,8 +103,8 @@ function analyzeHandSynergies(hand) {
         continue;
       }
 
-      // 非self系: 未使用の相手を探す
-      const cand = orderIdx.filter(j => j !== idx && !usedNonSelf.has(j));
+      // 非self系: 相手候補を探す（排他制限なし＝1枚を複数コンボの相手にできる）
+      const cand = orderIdx.filter(j => j !== idx);
       let partnerIdxs = [];
       if (req.cardId) {
         const f = cand.filter(j => hand[j] === req.cardId);
@@ -125,8 +126,12 @@ function analyzeHandSynergies(hand) {
         continue;
       }
 
-      partnerIdxs.forEach(j => usedNonSelf.add(j));
       const memberIdx = [...partnerIdxs, idx];
+      // 重複コンボ（同じメンバー集合＋同じトリガー＋同じ効果）を防ぐ
+      const key = 'pair#' + id + '#' + [...memberIdx].sort((a,b)=>a-b).join(',');
+      if (seen.has(key)) continue;
+      seen.add(key);
+
       const factor = syn.perMatch ? partnerIdxs.length : 1;
       const realGain = effBadges({
         coins: (syn.coins||0)*factor, cards: (syn.cards||0)*factor, buys: (syn.buys||0)*factor

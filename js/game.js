@@ -37,11 +37,18 @@ class Player {
     this.inPlay = [];
     this.discard = [];
     this.retired = [];  // リタイア（ゲームから除去）したカードid
+    this.scored = [];   // 購入した勝利点カード（山札に循環しない・別置き場）
     this.synergyUsed = new Set(); // シナジーで消費済みの inPlay インデックス
+    this.firedSynergies = new Set(); // 発動済みシナジーのキー（1ターン1回）
   }
 
   allCards() { return [...this.deck, ...this.hand, ...this.inPlay, ...this.discard]; }
-  totalVP() { return this.allCards().reduce((s, id) => s + (CARD_DB[id].vp || 0), 0); }
+  totalVP() {
+    // 山札等に残っているVP（保険）＋ 別置き場の得点カード
+    const inDeck = this.allCards().reduce((s, id) => s + (CARD_DB[id].vp || 0), 0);
+    const scoredVP = this.scored.reduce((s, id) => s + (CARD_DB[id].vp || 0), 0);
+    return inDeck + scoredVP;
+  }
   builderCount() { return this.allCards().filter(id => CARD_DB[id].type === 'builder').length; }
   onpremCount() { return this.allCards().filter(id => CARD_DB[id].type === 'onprem').length; }
   handAwsCount() { return this.hand.filter(id => CARD_DB[id].type === 'builder').length; }
@@ -59,7 +66,6 @@ class Game {
     this.coins = 0;
     this.buys = 1;
     this.over = false;
-    this._localUsed = new Set();
     this.pendingRecycle = null;
     this.retiredThisTurn = false;
 
@@ -191,73 +197,97 @@ class Game {
   //     { any: true }             自身以外のAWSカードが1枚でもある
   //   perMatch: true の場合、条件に合う未使用カード「全て」とマッチし効果×枚数、全て消費する
   // 発動した各シナジーについて {parts, usedIdx} を集計して返す。
-  resolveSynergies(player, card, selfIndex) {
-    const list = card.synergies || (card.secondary ? [card.secondary] : []);
-    if (list.length === 0) return { parts: [], usedIdx: [] };
-
-    const used = player.synergyUsed;
-    // 現時点で未使用の「自身以外の」場のカードインデックス
-    const avail = () => {
+  // 盤面シナジー解決（場に並んだカードを毎回スキャンし、未発動・未使用のシナジーを発動する）。
+  // - 一度シナジーに使われた（消費された）カードは再利用不可（player.synergyUsed）。
+  // - 各カードの各シナジーは1ターンに1回だけ発動（player.firedSynergies でキー管理）。
+  // - self（同名N枚）は閾値到達で1回、相手は消費しない。
+  // 戻り値: 発動した効果の説明文字列配列（ログ用）。
+  resolveBoardSynergies(player) {
+    const used = player.synergyUsed;      // 消費済み inPlay インデックス
+    const fired = player.firedSynergies;  // 発動済みシナジーのキー集合
+    const inPlay = player.inPlay;
+    const isBuilder = i => CARD_DB[inPlay[i]].type === 'builder';
+    const catOf = i => CARD_DB[inPlay[i]].category;
+    const avail = (selfIndex) => {
       const a = [];
-      for (let i = 0; i < player.inPlay.length; i++) {
+      for (let i = 0; i < inPlay.length; i++) {
         if (i === selfIndex) continue;
         if (used.has(i)) continue;
-        if (this._localUsed.has(i)) continue;
         a.push(i);
       }
       return a;
     };
-    const isBuilder = i => CARD_DB[player.inPlay[i]].type === 'builder';
-    const catOf = i => CARD_DB[player.inPlay[i]].category;
 
     const allParts = [];
-    const allUsed = [];
+    let progressed = true;
+    // 発動により盤面状態が変わる（消費が増える）ので、変化がなくなるまで繰り返す
+    let guard = 0;
+    while (progressed && guard++ < 100) {
+      progressed = false;
 
-    for (const syn of list) {
-      const req = syn.requires || {};
-      let matches = [];
+      for (let ti = 0; ti < inPlay.length; ti++) {
+        const card = CARD_DB[inPlay[ti]];
+        const list = card.synergies || (card.secondary ? [card.secondary] : []);
+        if (list.length === 0) continue;
 
-      if (req.self) {
-        // 同名カードが「ちょうど req.self 枚」に到達した瞬間に発動（消費しない）。
-        // これにより 2枚効果・3枚効果が累積し、閾値ごとに1回だけ発動する。
-        const sameCount = player.inPlay.filter(pid => pid === card.id).length;
-        matches = (sameCount === req.self) ? [selfIndex] : [];
-      } else if (req.cardId) {
-        const found = avail().filter(i => player.inPlay[i] === req.cardId);
-        matches = syn.perMatch ? found : found.slice(0, 1);
-      } else if (req.cardIds) {
-        const found = avail().filter(i => req.cardIds.includes(player.inPlay[i]));
-        matches = syn.perMatch ? found : found.slice(0, 1);
-      } else if (req.categoryIn) {
-        const found = avail().filter(i => req.categoryIn.includes(catOf(i)));
-        if (req.count) {
-          // count枚以上あれば count枚を消費して発動、なければ不発
-          matches = found.length >= req.count ? found.slice(0, req.count) : [];
-        } else {
-          matches = syn.perMatch ? found : found.slice(0, 1);
+        for (let si = 0; si < list.length; si++) {
+          const syn = list[si];
+          const req = syn.requires || {};
+
+          if (req.self) {
+            const key = 'self#' + card.id + '#' + req.self;
+            if (fired.has(key)) continue;
+            const sameCount = inPlay.filter(pid => pid === card.id).length;
+            if (sameCount < req.self) continue;
+            // 発動（自身は消費しない）
+            fired.add(key);
+            const eff = { coins: syn.coins || 0, cards: syn.cards || 0, buys: syn.buys || 0 };
+            const parts = this.applyEffect(player, eff);
+            if (parts.length) allParts.push(`${card.name}(同名${req.self}): ${parts.join(', ')}`);
+            progressed = true;
+            continue;
+          }
+
+          // 非self: このトリガーカード実体×このシナジーは1回だけ
+          const key = 'pair#' + ti + '#' + si;
+          if (fired.has(key)) continue;
+          if (used.has(ti)) continue; // トリガー自身が既に消費済みなら不可
+
+          const av = avail(ti);
+          let matches = [];
+          if (req.cardId) {
+            const f = av.filter(i => inPlay[i] === req.cardId);
+            matches = syn.perMatch ? f : f.slice(0, 1);
+          } else if (req.cardIds) {
+            const f = av.filter(i => req.cardIds.includes(inPlay[i]));
+            matches = syn.perMatch ? f : f.slice(0, 1);
+          } else if (req.categoryIn) {
+            const f = av.filter(i => req.categoryIn.includes(catOf(i)));
+            if (req.count) matches = f.length >= req.count ? f.slice(0, req.count) : [];
+            else matches = syn.perMatch ? f : f.slice(0, 1);
+          } else if (req.any) {
+            const f = av.filter(i => isBuilder(i));
+            matches = syn.perMatch ? f : f.slice(0, 1);
+          }
+
+          if (matches.length === 0) continue;
+
+          fired.add(key);
+          const factor = syn.perMatch ? matches.length : 1;
+          const eff = {
+            coins: (syn.coins || 0) * factor,
+            cards: (syn.cards || 0) * factor,
+            buys: (syn.buys || 0) * factor
+          };
+          const parts = this.applyEffect(player, eff);
+          if (parts.length) allParts.push(`${card.name}シナジー: ${parts.join(', ')}`);
+          // 相手カードを消費（再利用不可）。トリガー自身は消費しない。
+          matches.forEach(i => used.add(i));
+          progressed = true;
         }
-      } else if (req.any) {
-        const found = avail().filter(i => isBuilder(i));
-        matches = syn.perMatch ? found : found.slice(0, 1);
       }
-
-      if (matches.length === 0) continue;
-
-      const factor = syn.perMatch ? matches.length : 1;
-      const eff = {
-        coins: (syn.coins || 0) * factor,
-        cards: (syn.cards || 0) * factor,
-        buys: (syn.buys || 0) * factor
-      };
-      const parts = this.applyEffect(player, eff);
-      if (parts.length) allParts.push(...parts);
-
-      // self コンボは自身も消費対象。それ以外は相手のみ消費（自身は複数シナジーに使える）
-      const consume = req.self ? [] : matches.filter(i => i !== selfIndex);
-      consume.forEach(i => { this._localUsed.add(i); allUsed.push(i); });
     }
-
-    return { parts: allParts, usedIdx: allUsed };
+    return allParts;
   }
 
   // 特殊効果（個別処理）
@@ -318,19 +348,12 @@ class Game {
     parts.push(...this.applyEffect(player, card.primary));
     if (card.special) parts.push(...this.applySpecial(player, card));
 
-    const selfIndex = player.inPlay.length - 1;
-    // シナジー解決（複数効果対応）。_localUsed はこの1プレイ内での重複消費防止。
-    this._localUsed = new Set();
-    const { parts: synParts, usedIdx } = this.resolveSynergies(player, card, selfIndex);
-    if (usedIdx.length > 0) {
-      usedIdx.forEach(i => player.synergyUsed.add(i));
-      // 自身も self コンボで消費された場合は記録
-      if (this._localUsed.has(selfIndex)) player.synergyUsed.add(selfIndex);
-    }
-    this._localUsed = new Set();
+    // 場に並んだカード全体を再スキャンし、成立する未発動シナジーを発動する
+    // （相手カードを後から出しても発動する。使用済みカードは再利用不可）。
+    const synParts = this.resolveBoardSynergies(player);
 
     if (synParts.length > 0) {
-      this.log(`${player.name}: ${card.name} → ${parts.join(', ') || '効果なし'} ＋シナジー(${synParts.join(', ')})`, 'play');
+      this.log(`${player.name}: ${card.name} ${parts.length ? '(' + parts.join(', ') + ')' : ''} ＋シナジー(${synParts.join(' / ')})`, 'play');
       return true;
     }
     this.log(`${player.name}: ${card.name} ${parts.length ? '(' + parts.join(', ') + ')' : '（効果なし）'}`, 'play');
@@ -437,7 +460,7 @@ class Game {
     this.coins -= card.cost;
     this.buys -= 1;
     this.waSupply[id] -= 1;
-    player.discard.push(id);
+    player.scored.push(id);  // 勝利点カードは山札に入れず別置き場へ
     this.log(`${player.name}: ${card.name} を購入（$${card.cost}）★`, 'buy');
     this.checkEnd();
     return true;
@@ -449,6 +472,7 @@ class Game {
     p.inPlay = [];
     p.hand = [];
     p.synergyUsed = new Set();
+    p.firedSynergies = new Set();
     this.draw(p, 5, true);
 
     if (this.over) return;
